@@ -19,17 +19,35 @@ from bs4 import BeautifulSoup
 from indic_transliteration import sanscript
 from indic_transliteration.sanscript import transliterate as indic_transliterate
 
-vowel_list = ["a", "aa", "i", "ii", "u", "uu", ".r", ".rr", "e", "ai", "o", "au"]
+vowel_list = ['.rr', 'aa', 'ii', 'uu', '.r', 'ai', 'au', 'a', 'i', 'u', 'e', 'o']
+
+# def has_more_than_two_subwords(word):
+#     count = 0
+#     for vowel in vowel_list:
+#         if vowel in word:
+#             count += 1
+#             if count >= 1:
+#                 return True
+#     return False
+
 
 def has_more_than_two_subwords(word):
-    count = 0
+    vowel_counts = {}
+    total_count = 0
+    # Sort the vowels by length in descending order
+    # vowel_list.sort(key=len, reverse=True)
     for vowel in vowel_list:
-        if vowel in word:
-            count += 1
-            if count >= 1:
-                return True
+        count = word.count(vowel)
+        if count > 0:
+            # Subtract the count of current vowel from the string
+            word = word.replace(vowel, '')
+            vowel_counts[vowel] = count
+        total_count += count
+        if(total_count>2):
+            return True
     return False
-
+    
+    
 
 sentence_modes = {
     "sent" : "t",
@@ -292,6 +310,22 @@ def get_prathama_vibhakti(word, gender):
         
     return vibhakti, gender, l_velthuis
 
+def get_processed_vibhakti_split(token_data):
+    vibhakti = token_data['vibhakti']
+    word = token_data['word']
+    condition = token_data['sandhi_split_happens']
+    if vibhakti and (vibhakti != word) and condition:
+        processed_split = []
+        # print(token_data)
+        for sandhi,vibhakti_sandhi in zip(token_data['sandhi_split'], token_data['sandhi_split_vibhakti']):
+            if(sandhi + 'ः' == vibhakti_sandhi):
+                processed_split.append(sandhi)
+            else:
+                print(vibhakti, word)
+        return processed_split
+    else:
+        return None
+
 # Create an instance of CDSLCorpus321
 CDSL = pycdsl.CDSLCorpus()
 
@@ -309,6 +343,18 @@ with open('/data/BADRI/BharatGPT/sandhi-split/utils/pratyaya.csv', 'r') as csv_f
     suffixes = [row[column_index_to_extract] for row in csv_reader]
 
     suffixes_iso_temp = [transliterate.process('Devanagari','iso', txt) for txt in suffixes]
+    
+    
+input_file = '/data/BADRI/BharatGPT/sandhi-split/utils/upsarg_hi.txt'
+with open(input_file, 'r') as prefix_file:
+    prefix_list = [line.strip() for line in prefix_file ]
+    
+
+# Sort the list in decreasing order of length
+sorted_list = sorted(prefix_list, key=lambda x: len(x), reverse=True)
+
+# Transliterate prefix list to ISO format
+prefixes_iso = [transliterate.process('Devanagari', 'iso', txt) for txt in sorted_list]
 
 
 
@@ -353,6 +399,26 @@ def remove_punctuation_and_numbers(text):
     return text_without_punctuation
 
 
+def split_with_prefixes(word, prefixes, first=True):
+    splits = []
+    for prefix in prefixes:
+        if word.startswith(prefix):
+            
+            stem = transliterate.process('iso', 'Devanagari', word[len(prefix):])
+            count = 0 
+            for dictionary in dictionaries:
+                results = CDSL[dictionary].search(stem)
+                if results:
+                    splits.append(transliterate.process('iso', 'Devanagari', prefix))
+                    splits.append(transliterate.process('iso', 'Devanagari', stem))
+                    count = 1
+                    break
+            if(count == 1):
+                break
+    else:
+        splits.append(transliterate.process('iso', 'Devanagari', word))
+    return splits
+
 
 data_file = '/data/BADRI/BharatGPT/sandhi-split/data/samanantar.txt'
 
@@ -360,19 +426,40 @@ data_file = '/data/BADRI/BharatGPT/sandhi-split/data/samanantar.txt'
 
 
 all_words = []
-with open(data_file, 'r') as file:
-    data = file.read()
-    data = remove_punctuation_and_numbers(data)
-    sents = data.split("\n")
-    for sent in tqdm(sents):
-        # print(sent)
-        words = sent.split()
-        for word in words:
-            all_words.append(word)
-            
-word_dict = create_word_dictionary(all_words)
+word_dict = {}
+freq_words = True
+if(freq_words):
+    with open('./../data/first_n_lines.txt', 'r') as file:
+        data = file.read()
+        data = data.split('\n')
+        first_line = False
+        for line in data:
+            if( not first_line):
+                first_line = True
+                continue
+            else:
+                parts = re.split(r',(?=\d)', line.strip())
+                word = parts[0]
+                if(len(parts)<=1):
+                    continue
+                else:
+                    freq = int(parts[-1].strip())
+                    word_dict[word] = freq
+else:
 
-word_dict = sort_dictionary_by_value(word_dict, reverse=True)
+    with open(data_file, 'r') as file:
+        data = file.read()
+        data = remove_punctuation_and_numbers(data)
+        sents = data.split("\n")
+        for sent in tqdm(sents):
+            # print(sent)
+            words = sent.split()
+            for word in words:
+                all_words.append(word)
+                
+    word_dict = create_word_dictionary(all_words)
+
+    word_dict = sort_dictionary_by_value(word_dict, reverse=True)
 
 print("Created Unique words")
 
@@ -383,7 +470,7 @@ counted_values = True
     
 for token_dev, freq in tqdm(word_dict.items()):
     
-    if(counted_values and token_dev =='मुस्लिम'):
+    if(counted_values and token_dev =='लम्बित'):
         counted_values = False
         continue
         
@@ -391,7 +478,6 @@ for token_dev, freq in tqdm(word_dict.items()):
         continue
     else:
         token_data = {}
-        token_data['stem_exists'] = False
         token_data['word'] = token_dev
         token_data['frequency'] = freq
         token = transliterate.process('Devanagari','iso', token_dev)
@@ -401,25 +487,38 @@ for token_dev, freq in tqdm(word_dict.items()):
         token_data['gender'] = 'Mas'
         if(ends_with_suffix(token, feminine_words)):
             token_data['gender'] = 'Fem'
-
+ 
+ 
+        token_data['prefix_exists'] = False   
+        token_data['suffix_exists'] = False
+        splits = split_with_prefixes(token, prefixes_iso)        
+        
+        
+        if(len(splits) > 1):
+            token_data['prefix_exists'] = True
+            token_data['prefix'] = splits[0]
+            token_data['stem'] = splits[1]
+            token_dev = token_data['stem']
+            token = transliterate.process('Devanagari','iso', token_dev)
 
         for suffix in suffixes_iso:
             if(token.endswith(suffix) and len(token[:-len(suffix)])>=3):
                 for dictionary in dictionaries:
                     results = CDSL[dictionary].search(transliterate.process( 'iso','Devanagari', token[:-len(suffix)]))
                     if results:
-                        token_data['stem_exists'] = True
+                        token_data['suffix_exists'] = True
                         token_data['stem'] = transliterate.process( 'iso','Devanagari',token[:-len(suffix)])
                         token_data['suffix'] = transliterate.process( 'iso','Devanagari', suffix)
                         break
-            if(token_data['stem_exists']):
+            if(token_data['suffix_exists']):
                 break
             
 
-        if(token_data['stem_exists']):
-            token_data['vibhakti'], token_data['gender'], token_data['l_velthuis'] = get_prathama_vibhakti(token_data['stem'], token_data['gender'])
-        else:
-            token_data['vibhakti'], token_data['gender'], token_data['l_velthuis'] = get_prathama_vibhakti(token_data['word'], token_data['gender'])
+        if(token_data['suffix_exists']):
+            token_dev = token_data['stem']
+            token = transliterate.process('Devanagari','iso', token_dev)
+
+        token_data['vibhakti'], token_data['gender'], token_data['l_velthuis'] = get_prathama_vibhakti(token_dev, token_data['gender'])
 
         token_data['sandhi_split_happens'] = False
         if(has_more_than_two_subwords(token_data['l_velthuis'])):
@@ -429,7 +528,15 @@ for token_dev, freq in tqdm(word_dict.items()):
                 token_data['sandhi_split_vibhakti'] = run_sh_text(cgi_file, token_data['vibhakti'], "DN", lex="MW", sentence_mode="f", us="f", output_encoding="deva", segmentation_mode="l", pipeline="t")
         else:
             token_data['sandhi_split'] = None
+         
+        processed_vibhakti_split = get_processed_vibhakti_split(token_data)
+        if(processed_vibhakti_split):
+            token_data['sandhi_split_vibhakti_processed'] = processed_vibhakti_split
+        
+            
         final_data.append(token_data)
+        
+        
 
 
         with open('final_data_1.json', 'a') as f:
